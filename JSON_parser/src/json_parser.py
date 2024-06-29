@@ -19,12 +19,11 @@ class JsonParser:
 
     def validate(self):
         if not self.text:
+            self.error_messages.append("Empty file")
             return False
-        return self.is_valid_json(self.text)
 
-    def is_valid_json(self, text):
         try:
-            self._parse_value(text.strip())
+            self._parse_value(self.text.strip())
             return True
         except ValueError as e:
             self.error_messages.append(str(e))
@@ -32,13 +31,16 @@ class JsonParser:
 
     def _parse_value(self, text):
         text = text.strip()
-        if text.startswith('"'):
-            return self._parse_string(text)
+
+        if text.startswith('{'):
+            return self._parse_object(text)
         elif text.startswith('['):
             return self._parse_array(text)
-        elif text.startswith('{'):
-            return self._parse_object(text)
-        elif text in ("true", "false", "null"):
+        else:
+            return self._parse_primitive(text)
+
+    def _parse_primitive(self, text):
+        if text == "true" or text == "false" or text == "null":
             return text
         elif self._is_number(text):
             return text
@@ -46,43 +48,33 @@ class JsonParser:
             raise ValueError(f"Invalid JSON value: {text}")
 
     def _parse_string(self, text):
-        
-        if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
-            escaped = False
-            
-            arr = text[1:-1].split(':')
-            
-            if len(arr) == 2:
-                return self._parse_string(arr[1])
-            for i in range(1, len(text) - 1):
-                if text[i] == '"' and not escaped:
-                    raise ValueError(f"{text}: Invalid JSON string. Unescaped double quote found.")
-                if text[i] == '\\' and not escaped:
-                    escaped = True
+        # Handle escape sequences manually
+        parsed_string = ""
+        i = 1  # Start after opening quote
+        while i < len(text) - 1:
+            if text[i] == '\\':
+                if text[i + 1] in ('"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u'):
+                    parsed_string += text[i:i + 2]
+                    i += 2
                 else:
-                    escaped = False
-            return text[1:-1]
-        
-        else:
-            if text.startswith("\\"):
-                
-                self.error_messages.append(f"Illegal backslash escape: {text}")
-                return False
+                    raise ValueError(f"Invalid escape sequence in JSON string: '{text[i:i + 2]}'")
             else:
-                raise ValueError(f"{text}: Invalid JSON string. Missing closing '\"' or string too short.")
+                parsed_string += text[i]
+                i += 1
+        return parsed_string
 
     def _parse_array(self, text):
         if not text.endswith(']'):
             raise ValueError("Invalid JSON array")
-        if text[1:-1] == '':
-            return True
+        if text[1:-1].strip() == '':
+            return []
         elements = self._split_elements(text[1:-1], ',')
         return [self._parse_value(el.strip()) for el in elements]
 
     def _parse_object(self, text):
         if not text.endswith('}'):
             raise ValueError("Invalid JSON object")
-        if len(text) == 2:
+        if len(text) <= 2:
             return {}
         items = self._split_elements(text[1:-1], ',')
         obj = {}
@@ -96,20 +88,6 @@ class JsonParser:
         if colon_index == -1:
             raise ValueError(f"Invalid JSON object: Missing colon in {item}")
         return item[:colon_index], item[colon_index + 1:]
-
-    def _is_number(self, text):
-        try:
-            if text.isdigit():
-                if text[0] == "0":
-                    self.error_messages.append(f"Numbers cannot have leading zeroes: {text}")
-                    return False
-            elif text[:2] == "0x":
-                self.error_messages.append(f"Numbers cannot be hex: {text}")
-                return False
-            float(text)
-            return True
-        except ValueError:
-            raise ValueError(f"Invalid number: {text}")
 
     def _split_elements(self, text, delimiter):
         elements = []
@@ -130,6 +108,17 @@ class JsonParser:
         elements.append(text[start:])
         return elements
 
+    def _is_number(self, text):
+        try:
+            if text.isdigit():
+                if text[0] == "0" and len(text) > 1:
+                    raise ValueError(f"Invalid number: {text}")
+            elif text[:2] == "0x":
+                raise ValueError(f"Numbers cannot be hex: {text}")
+            float(text)
+            return True
+        except ValueError:
+            return False
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="A CLI tool to validate JSON files without using the json library.")
